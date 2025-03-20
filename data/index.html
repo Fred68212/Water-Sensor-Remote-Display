@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>MONITOR CONFIGURATION</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="Cache-Control" content="no-cache">
+        <link rel="icon" type="image/png" href="favicon.png">
+        <link rel="stylesheet" type="text/css" href="style.css">
+    </head>
+    <body>
+        <div class="topnav">
+            <h1>CONFIGURE MONITOR DEVICE</h1>
+        </div>
+        <div class="getInfo">
+            <form action="http://192.168.1.41/config" method="get">
+				<table>
+					<tr>
+				        <td class="tdleft">Full Level:</td>
+                        <td><input type="text" id="currentMinLevel" name="currentMinLevel" maxLength="2" class="textInput"></td>
+                        <td>Current Value: </td><td><span id="minLevel"></span></td>
+                    </tr>
+                    <tr>
+                        <td class="tdleft">Empty Level:</td>
+                        <td><input type="text" id="currentMaxLevel" name="currentMaxLevel" maxLength="2" class="textInput"></td>
+                        <td>Current Value: </td><td><span id="maxLevel"></span></td>
+                    </tr>
+                    <tr>
+                        <td class="tdleft">Alert value:</td>
+                        <td><input type="text" id="data" name="data" maxLength="2" class="textInput"></td>
+                        <td>Current Value: </td><td><span id="alertValue"></span></td>
+                    </tr>
+                </table>
+                <br>
+                <input type="submit" value="Update">                
+            </form>
+
+            <p>Configuration File:</p>
+            <br>
+            <pre id="fileContent"></pre>
+
+        </div>
+
+
+        <script src="script.js"></script>
+    </body>
+</html>
