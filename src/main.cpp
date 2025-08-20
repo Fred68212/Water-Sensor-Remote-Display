@@ -15,6 +15,7 @@
 #include <esp_now.h>
 #include <string>
 #include <iostream>
+#include "time.h"
 
 // Static IP address configuration
 IPAddress local_IP(192, 168, 1, 41);
@@ -48,8 +49,10 @@ volatile int alertValue = 5;
 
 int number;
 int pirVal = 0;
-bool pirTriggered = false;
+
 int count;
+
+RTC_DATA_ATTR int lastMeasurement = 0;
 
 // Alarm variables
 volatile int lastAlarm = 0;
@@ -58,10 +61,22 @@ hw_timer_t *Timer0_Cfg = NULL;
 // DS3231 RTC module
 RTC_DS3231 rtc;
 
+// NTP and Timezone settings
+const char* ntpServer = "pool.ntp.org";
+// US Eastern Time Zone (New York). This handles EST/EDT automatically.
+// EST5EDT,M3.2.0,M11.1.0
+// See https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html for details
+const char* tzInfo = "EST5EDT,M3.2.0,M11.1.0";
+
+// Count number of boots to set rtc time every 91 days
+RTC_DATA_ATTR int bootCount = 0;
+
 // the pin that is connected to SQW
 #define CLOCK_INTERRUPT_PIN 4
 
-const String statusServer PROGMEM = "http://192.168.1.11/status.php?unitID=Monitor&unitStatus=";
+String boardStatus; 
+
+// const String statusServer PROGMEM = "http://192.168.1.11/status.php?unitID=Monitor&unitStatus=";
 
 String systemStatus = "ok";
 
@@ -75,6 +90,43 @@ typedef struct struct_message {
 struct_message myData;
 
 bool timerFlag = false;
+
+// Timer: Auxiliary variables
+unsigned long now = millis();
+unsigned long lastTrigger = 0;
+boolean startTimer = false;
+boolean pirTriggered = false;
+
+// Checks if motion was detected, sets LED HIGH and starts a timer
+void IRAM_ATTR detectsMovement() {
+//  digitalWrite(LED_BUILTIN, HIGH);
+  
+  pirTriggered = true;
+  startTimer  = true;
+  lastTrigger = millis();
+}
+
+void displayMessage(const String& message) {
+    Serial.println(message);
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println(message);
+    display.display();
+}
+
+void setRtcTimeFromNtp() {
+    configTzTime(tzInfo, "pool.ntp.org", "time.nist.gov");
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo, 5000)) {
+        rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                            timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+        displayMessage("RTC time set from NTP.");
+    } else {
+        displayMessage("Failed to obtain NTP time.");
+    }
+} 
 
 
 String readConfigFile() {
@@ -125,6 +177,23 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   Serial.println(len);
   Serial.print("Int: ");
   Serial.println(myData.b);
+  lastMeasurement = myData.b;
+
+}
+
+void displayStatusLine() {
+
+  display.setFont(&FreeSans9pt7b);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 15);
+  display.print("LAST:");
+  display.print(lastMeasurement);
+  display.print(" IN.");
+  display.setCursor(110, 15);    
+  display.print(bootCount);
+  display.drawLine(0, 20, SCREEN_WIDTH, 20, SSD1306_WHITE);
+
 }
 
 
@@ -251,40 +320,6 @@ void handleGet(AsyncWebServerRequest *request) {
   configValue["alertValue"] = alertValue;
   writeConfigFile(JSON.stringify(configValue));
 
-  
-
-  /*
-  maxLevel = request->getParam("currentMaxLevel")->value().toInt();
-  alertValue = request->getParam("data")->value().toInt();
-  //Serial.printlnconfigValue["minLevel"] = minLevel;
-  
-  if (request->hasParam("currentMinLevel") && request->hasParam("currentMaxLevel") && request->hasParam("data")) {
-      String minLevelStr = request->getParam("currentMinLevel")->value();
-      String maxLevelStr = request->getParam("currentMaxLevel")->value();
-      String alertValueStr = request->getParam("data")->value();
-
-    minLevel = minLevelStr.toInt();
-    // Serial.print("Converted integer: ");
-    // Serial.println(minLevel);
-    maxLevel = maxLevelStr.toInt();
-    // Serial.print("Converted integer: ");
-    // Serial.println(maxLevel);
-    alertValue = alertValueStr.toInt();
-    // Serial.print("Converted integer: ");
-    // Serial.println(alertValue);
-    
-    configValue["minLevel"] = minLevel;
-    configValue["maxLevel"] = maxLevel;
-    configValue["alertValue"] = alertValue;
-    */
-    Serial.println("received values:");
-    Serial.println(minLevel);
-    Serial.println(maxLevel);
-    Serial.println(alertValue);
-    Serial.println("received config:");
-    Serial.println(configValue);
-    
-
 
   // notify client
     notifyClients(JSON.stringify(configValue));
@@ -352,6 +387,38 @@ void initLittleFS() {
   Serial.println("LittleFS mounted successfully");
 }
 
+void reportStatus(String systemStatus) {
+  String bootCountString = String(bootCount);
+  String statusServer PROGMEM = "http://192.168.1.11/status.php?unitID=Monitor&unitStatus=";
+  String urlString = statusServer + systemStatus + "&bootCount=" + bootCountString + "&boardTime=" + timeString;
+  Serial.println(urlString);
+  dbInsert(urlString.c_str());
+} 
+
+void printTime() {
+// Print the time in 24pt Sans font
+  display.setFont(&FreeSansBold24pt7b);
+  display.setTextSize(1);
+  display.setCursor(0, 62);
+  display.println(timeString);
+
+  // Update the display
+  display.display();
+}
+
+void printAlert() {
+  display.clearDisplay();
+  display.setFont(&FreeSansBold12pt7b);
+  display.setTextSize(1);
+  display.setCursor(10, 25);
+  display.println("NEEDS");
+  display.setCursor(10, 55);
+  display.println("ATTN!");    
+  
+  // Update the display
+  display.display();
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -385,9 +452,29 @@ void setup() {
     while (1);
   }
 
-  //Uncomment the below line to set the initial date and time
+  if (rtc.lostPower()) {
+    displayMessage("RTC lost power.\nSetting time from NTP.");
+  } else {
+    displayMessage("RTC is running.");
+  }
+  delay(2000);
 
- // rtc.adjust(DateTime(__DATE__, __TIME__));  
+  // Increment boot count
+  bootCount++;
+  Serial.printf("Boot count: %d\n", bootCount);
+  displayMessage("Boot count: " + String(bootCount));
+  delay(2000);
+  // If boot count is 1, set RTC time from NTP
+  if (bootCount == 1) {
+    setRtcTimeFromNtp();
+  } else {
+    displayMessage("RTC time already set.\nBoot count: " + String(bootCount));      
+    delay(2000);
+  }
+  if (bootCount >= 91) {
+    displayMessage("Resetting boot count to 0.");
+    bootCount = 0; // Reset boot count every 91 boots
+  } 
 
   // Set the SQW pin to generate a 1Hz signal
   rtc.writeSqwPinMode(DS3231_SquareWave1Hz);
@@ -430,19 +517,13 @@ void setup() {
     Once ESPNow is successfully Init, we will register for recv CB to
     get recv packer info
 */
-    esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
+  esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
 
   // Check to see if config.txt file exists
   if (LittleFS.exists("/config.txt")) {
     Serial.println("config.txt exists");
     configValue = readConfigFile(); //Read the file directly to the configValue object
-
-        // Print the values from the JSON document
-        Serial.print("minLevel: ");
-        Serial.println(configValue["minLevel"]);
-        Serial.print("maxLevel: ");
-        Serial.println(configValue["maxLevel"]);
-        Serial.print("alertValue: ");        Serial.println(configValue["alertValue"]);
+      
   } else {
       Serial.println("config.txt does not exist");
       configValue["minLevel"] = 7;
@@ -464,16 +545,26 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(pirPin, INPUT);
 
+  attachInterrupt(digitalPinToInterrupt(pirPin), detectsMovement, RISING);
+
+  // Set LED to LOW
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
   server.on("/config", HTTP_GET, handleGet);
 
   // Print the initial time
   updateTime();
 
-  systemStatus = "Running";
-  String urlString = statusServer + systemStatus;
+  // String bootCountString = String(bootCount);
+  
+  String systemStatus = "Running";
+  reportStatus(systemStatus);
+  /*
+  String urlString = statusServer + systemStatus + "&bootCount=" + bootCountString + "&boardTime=" + timeString;
   Serial.println(urlString);
   dbInsert(urlString.c_str());
-
+  */
   // Web Server Root URL
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(LittleFS, "/index.html", "text/html");
@@ -490,14 +581,10 @@ void loop() {
 
   if (rtc.now().hour() == 20 && rtc.now().minute() == 50) {
 
+    display.clearDisplay();
+    display.display();
     systemStatus = "Sleeping";
-    String urlString = statusServer + systemStatus;
-    Serial.println(urlString);
-    dbInsert(urlString.c_str());
-    Serial.println("Shutting off Bluetooth and Wifi...");
-    WiFi.disconnect();
-    WiFi.mode(WIFI_OFF);
-    Serial.println("Wifi off");
+    reportStatus(systemStatus);
     Serial.flush();
     delay(1000);
     esp_err_t rtc_gpio_pullup_en(GPIO_NUM_4);
@@ -515,69 +602,49 @@ void loop() {
   unsigned long lastUpdateTime = 0;
   unsigned long currentMillis = millis();
   // Update the display every minute
+
+/*
   if (currentMillis - lastUpdateTime >= 60000) {
     lastUpdateTime = currentMillis;
     updateTime();
   }
+*/    
 
-  pirVal = digitalRead(pirPin);
-
-  if (pirVal == HIGH) {
-    pirTriggered = true;
-    currentMillis = millis();
-  // Turn the LED on
-  //  digitalWrite(LED_BUILTIN, HIGH);
-
-    if (currentMillis - lastUpdateTime >= 60000) {
-      lastUpdateTime = currentMillis;
+  if (startTimer == true) {
+    detachInterrupt(pirPin);
+    digitalWrite(LED_BUILTIN, HIGH);
+    while (currentMillis - lastTrigger < 30000) {
+      currentMillis = millis();
       updateTime();
-    }
+  
 
   // Clear the display and print the received string
-  display.clearDisplay();
+      display.clearDisplay();
 
-  display.setFont(&FreeSans9pt7b);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 15);
-  display.print("LAST:");
-  display.print(myData.b);
-  display.print(" IN.");
-  display.drawLine(0, 20, SCREEN_WIDTH, 20, SSD1306_WHITE);
+      displayStatusLine();
 
-// Print the time in 24pt Sans font
-  display.setFont(&FreeSansBold24pt7b);
-  display.setTextSize(1);
-  display.setCursor(0, 62);
-  display.println(timeString);
+      printTime();
 
-  // Update the display
-  display.display();
+    }
 
   if (myData.b <= alertValue) {
-    delay(15000);
-    display.clearDisplay();
-    display.setFont(&FreeSansBold12pt7b);
-    display.setTextSize(1);
-    display.setCursor(10, 25);
-    display.println("NEEDS");
-    display.setCursor(10, 55);
-    display.println("ATTN!");    
-  
-    // Update the display
-    display.display();
-    delay(15000);
-  }
-
-  } else {
-    pirTriggered = false;
-    digitalWrite(LED_BUILTIN, LOW);
-  // Add a delay before turning off the display
   //  delay(15000);
-  // Turn display off
-    display.clearDisplay();
-    display.display();
+    while (currentMillis - lastTrigger < 60000) {
+      currentMillis = millis();
+      printAlert();
+
+    }
+
   }
+  }
+  digitalWrite(pirPin, LOW);
+  digitalWrite(LED_BUILTIN, LOW);
+  startTimer = false;
+  pirTriggered = false;
+  display.clearDisplay();
+  display.display();
+  attachInterrupt(digitalPinToInterrupt(pirPin), detectsMovement, RISING);
+  
 
 }
 
