@@ -583,6 +583,7 @@ void loop() {
 
     display.clearDisplay();
     display.display();
+    updateTime();
     systemStatus = "Sleeping";
     reportStatus(systemStatus);
     Serial.flush();

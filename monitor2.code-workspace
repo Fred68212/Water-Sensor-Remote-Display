@@ -4,5 +4,12 @@
 			"path": "."
 		}
 	],
-	"settings": {}
+	"settings": {
+		"editor.fontSize": 18,
+		"debug.console.fontSize": 18,
+		"scm.inputFontSize": 17,
+		"terminal.integrated.fontSize": 18,
+		"chat.editor.fontSize": 18,
+		"markdown.preview.fontSize": 18
+	}
 }
